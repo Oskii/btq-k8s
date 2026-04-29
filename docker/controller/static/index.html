@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BTQnet Console</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --bg-2: #11161f;
+      --bg-3: #1a212d;
+      --line: #1f2a3a;
+      --text: #d8e1ee;
+      --muted: #6c7a8d;
+      --accent: #ffb547;
+      --accent-2: #4ad6e3;
+      --good: #2ecc71;
+      --bad: #ff5e5e;
+      --warn: #ffb547;
+      --soft: #2a3346;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, "Inter", sans-serif;
+      background: linear-gradient(180deg, #07090f 0%, #0b0f17 200px);
+      color: var(--text);
+    }
+    .topbar {
+      display: flex; align-items: center; gap: 18px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(7, 9, 15, 0.85);
+      backdrop-filter: blur(12px);
+      position: sticky; top: 0; z-index: 5;
+    }
+    .topbar h1 {
+      font-size: 16px; font-weight: 700; letter-spacing: 0.04em;
+      margin: 0; text-transform: uppercase;
+    }
+    .topbar h1 span { color: var(--accent); }
+    .top-stats { display: flex; gap: 14px; flex: 1; flex-wrap: wrap; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--bg-2); border: 1px solid var(--line);
+      padding: 6px 12px; border-radius: 999px; font-size: 12px;
+    }
+    .pill b { color: var(--accent); font-weight: 600; }
+    .pill.ok b { color: var(--good); }
+    .pill.warn b { color: var(--warn); }
+    .pill.bad b { color: var(--bad); }
+    .links { display: flex; gap: 12px; }
+    .links a {
+      color: var(--muted); text-decoration: none; font-size: 12px;
+      padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line);
+    }
+    .links a:hover { color: var(--text); border-color: var(--accent); }
+
+    .layout {
+      display: grid; grid-template-columns: 1fr 360px;
+      gap: 18px; padding: 18px 24px;
+      max-width: 1600px; margin: 0 auto;
+    }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: 12px; padding: 16px 18px;
+    }
+    .card h2 {
+      margin: 0 0 12px; font-size: 12px; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted); font-weight: 700;
+    }
+
+    .nodes {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .node {
+      background: var(--bg-3);
+      border: 1px solid var(--line);
+      border-radius: 10px; padding: 12px;
+      transition: border-color 0.15s, transform 0.15s;
+      cursor: default;
+    }
+    .node[data-fork="0"] { border-left: 3px solid var(--accent); }
+    .node[data-fork="1"] { border-left: 3px solid var(--accent-2); }
+    .node[data-fork="2"] { border-left: 3px solid #d674ff; }
+    .node[data-fork="3"] { border-left: 3px solid #ff7a59; }
+    .node[data-fork="4"] { border-left: 3px solid #ff5e9b; }
+    .node.down { opacity: 0.5; }
+    .node.iso { border-color: var(--bad); }
+    .node-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: 6px;
+    }
+    .node-name { font-weight: 700; font-size: 14px; }
+    .node-name .iso-badge {
+      display: inline-block; margin-left: 6px;
+      font-size: 10px; padding: 2px 6px;
+      background: var(--bad); color: white; border-radius: 4px;
+    }
+    .node-hash { font-family: ui-monospace, "SF Mono", Menlo, monospace;
+                 font-size: 11px; color: var(--muted); }
+    .node-stats {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;
+      font-size: 12px; color: var(--muted); margin-top: 8px;
+    }
+    .node-stats b { color: var(--text); font-weight: 600; }
+    .node-actions {
+      display: flex; gap: 6px; margin-top: 10px;
+    }
+    .node-actions button {
+      flex: 1; font-size: 11px; padding: 5px 0;
+      background: var(--bg-2); color: var(--text);
+      border: 1px solid var(--line); border-radius: 6px;
+      cursor: pointer; transition: all 0.1s;
+    }
+    .node-actions button:hover {
+      border-color: var(--accent); color: var(--accent);
+    }
+    .node-actions button.danger:hover {
+      border-color: var(--bad); color: var(--bad);
+    }
+
+    .actions {
+      display: grid; gap: 14px;
+    }
+    .action-group {
+      background: var(--bg-3);
+      border: 1px solid var(--line);
+      border-radius: 10px; padding: 12px 14px;
+    }
+    .action-group h3 {
+      font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase;
+      margin: 0 0 8px; color: var(--muted); font-weight: 700;
+    }
+    .row {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .row label {
+      font-size: 11px; color: var(--muted); min-width: 50px;
+    }
+    select, input[type="number"], input[type="text"] {
+      background: var(--bg-2); color: var(--text);
+      border: 1px solid var(--line); border-radius: 6px;
+      padding: 5px 8px; font: inherit; font-size: 13px;
+      min-width: 0; flex: 1;
+    }
+    select:focus, input:focus { outline: none; border-color: var(--accent); }
+    button {
+      background: var(--accent); color: #1a1407;
+      border: none; padding: 6px 14px; border-radius: 6px;
+      font: inherit; font-weight: 600; font-size: 13px;
+      cursor: pointer; transition: filter 0.15s;
+    }
+    button:hover { filter: brightness(1.1); }
+    button:active { filter: brightness(0.9); }
+    button.ghost {
+      background: transparent; color: var(--text);
+      border: 1px solid var(--line);
+    }
+    button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+    button.ghost.on { background: var(--accent); color: #1a1407; border-color: var(--accent); }
+    button.danger { background: var(--bad); color: white; }
+
+    .events {
+      max-height: calc(100vh - 200px);
+      overflow-y: auto;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px;
+    }
+    .event {
+      padding: 6px 8px;
+      border-bottom: 1px dashed var(--line);
+      display: grid; grid-template-columns: 60px 1fr; gap: 8px;
+    }
+    .event:last-child { border: 0; }
+    .event-time { color: var(--muted); font-size: 11px; }
+    .event[data-kind="mine"] .event-msg { color: var(--accent); }
+    .event[data-kind="auto_mine"] .event-msg { color: #c89e54; }
+    .event[data-kind="tx"] .event-msg { color: var(--accent-2); }
+    .event[data-kind="storm"] .event-msg { color: var(--accent-2); font-weight: 600; }
+    .event[data-kind="isolate"] .event-msg { color: var(--bad); }
+    .event[data-kind="heal"] .event-msg { color: var(--good); }
+    .event[data-kind="auto"] .event-msg { color: var(--muted); }
+    .event[data-kind="pace"] .event-msg { color: var(--muted); }
+
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: var(--bg-3); border: 1px solid var(--line);
+      padding: 10px 16px; border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      transform: translateY(40px); opacity: 0;
+      transition: transform 0.2s, opacity 0.2s;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.error { border-color: var(--bad); color: #ffb6b6; }
+    .toast.success { border-color: var(--good); color: #b6ffd2; }
+
+    .btn-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn-bar button { flex: 1; min-width: 56px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>BTQ<span>NET</span> CONSOLE</h1>
+    <div class="top-stats" id="topStats"></div>
+    <div class="links">
+      <a href="http://localhost:30030" target="_blank">Grafana</a>
+      <a href="http://localhost:30090" target="_blank">Prometheus</a>
+      <a href="/api/state" target="_blank">/api/state</a>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div>
+      <div class="card" style="margin-bottom: 18px;">
+        <h2>Nodes</h2>
+        <div id="nodes" class="nodes"></div>
+      </div>
+
+      <div class="card">
+        <h2>Actions</h2>
+        <div class="actions">
+
+          <div class="action-group">
+            <h3>Mine blocks</h3>
+            <div class="row">
+              <label>Node</label>
+              <select id="mineNode"></select>
+              <input id="mineCount" type="number" min="1" max="500" value="1" style="max-width: 80px;">
+              <button onclick="mine()">Mine</button>
+              <button class="ghost" onclick="setMineCount(1)">×1</button>
+              <button class="ghost" onclick="setMineCount(5)">×5</button>
+              <button class="ghost" onclick="setMineCount(25)">×25</button>
+              <button class="ghost" onclick="setMineCount(101)">×101</button>
+            </div>
+          </div>
+
+          <div class="action-group">
+            <h3>Send transaction</h3>
+            <div class="row">
+              <label>From</label>
+              <select id="txSrc"></select>
+              <label>To</label>
+              <select id="txDst"></select>
+              <input id="txAmount" type="number" min="0.00001" step="0.0001" value="0.01" style="max-width: 120px;">
+              <button onclick="sendTx()">Send</button>
+            </div>
+            <div class="row">
+              <label>Storm</label>
+              <input id="stormCount" type="number" min="1" max="200" value="25" style="max-width: 80px;">
+              <button onclick="storm()">Tx storm</button>
+            </div>
+          </div>
+
+          <div class="action-group">
+            <h3>Network partition / fork</h3>
+            <div class="row">
+              <label>Node</label>
+              <select id="partNode"></select>
+              <button class="danger" onclick="isolate()">Isolate</button>
+              <button onclick="heal()">Heal</button>
+            </div>
+            <div class="row" style="font-size: 11px; color: var(--muted);">
+              Tip: isolate a node, mine on it AND on the rest of the cluster,
+              then heal — watch the chain reorg in real time.
+            </div>
+          </div>
+
+          <div class="action-group">
+            <h3>Auto loops</h3>
+            <div class="row">
+              <button id="autoMine" class="ghost" onclick="toggleAuto('mining')">auto-mine</button>
+              <button id="autoTx" class="ghost" onclick="toggleAuto('tx')">auto-tx</button>
+              <label>block / s</label>
+              <input id="paceBlock" type="number" min="0.5" step="0.5" value="10" style="max-width: 80px;">
+              <label>tx / s</label>
+              <input id="paceTx" type="number" min="0.1" step="0.1" value="4" style="max-width: 80px;">
+              <button onclick="updatePace()">Apply</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Event log</h2>
+      <div id="events" class="events"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const state = { latest: null, forkColors: {} };
+
+    function fmt(n) {
+      if (n === undefined || n === null) return "-";
+      return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(4);
+    }
+    function shorten(h) { return h ? h.slice(0, 8) : "-"; }
+    function fmtTime(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString(undefined, { hour12: false });
+    }
+
+    async function api(path, opts = {}) {
+      const r = await fetch(path, {
+        method: opts.method || "GET",
+        headers: { "Content-Type": "application/json" },
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.ok === false) {
+        toast(data.error || `HTTP ${r.status}`, "error");
+        throw new Error(data.error || "request failed");
+      }
+      return data;
+    }
+
+    function toast(msg, kind = "success") {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.className = `toast show ${kind}`;
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => el.classList.remove("show"), 2400);
+    }
+
+    function refresh() { return tick(); }
+
+    async function tick() {
+      let s;
+      try { s = await api("/api/state"); }
+      catch (e) { return; }
+      state.latest = s;
+      renderTop(s);
+      renderNodes(s);
+      renderEvents(s);
+      renderAuto(s);
+      syncSelectOptions(s);
+    }
+
+    function renderTop(s) {
+      const c = s.cluster || {};
+      const fork = (c.distinct_best_blocks ?? 1) > 1;
+      const html = `
+        <span class="pill"><b>${s.network}</b></span>
+        <span class="pill ok">reachable <b>${c.reachable ?? "?"}/${c.total ?? "?"}</b></span>
+        <span class="pill">height max <b>${fmt(c.height_max)}</b></span>
+        <span class="pill ${c.spread > 0 ? "warn" : ""}">spread <b>${fmt(c.spread)}</b></span>
+        <span class="pill ${fork ? "bad" : "ok"}">distinct tips <b>${c.distinct_best_blocks ?? "?"}</b></span>
+        <span class="pill"><b>${(s.auto || {}).mining ? "AUTO-MINE ON" : "auto-mine off"}</b></span>
+        <span class="pill"><b>${(s.auto || {}).tx ? "AUTO-TX ON" : "auto-tx off"}</b></span>
+      `;
+      document.getElementById("topStats").innerHTML = html;
+    }
+
+    function forkIndex(hash) {
+      if (!hash) return null;
+      if (state.forkColors[hash] === undefined) {
+        // assign deterministic indices in order of first appearance
+        const next = Object.keys(state.forkColors).length % 5;
+        state.forkColors[hash] = next;
+      }
+      return state.forkColors[hash];
+    }
+
+    function renderNodes(s) {
+      const wrap = document.getElementById("nodes");
+      wrap.innerHTML = "";
+      // Reset fork colour map every render so forks that disappear free their slot
+      state.forkColors = {};
+      // First pass: assign indices in node-idx order
+      s.nodes.forEach(n => { if (n.up && n.best_hash) forkIndex(n.best_hash); });
+      s.nodes.forEach(n => {
+        const div = document.createElement("div");
+        const fi = n.best_hash ? state.forkColors[n.best_hash] : null;
+        div.className = "node" + (n.up ? "" : " down") + (n.isolated ? " iso" : "");
+        if (fi !== null && fi !== undefined) div.dataset.fork = fi;
+        div.innerHTML = `
+          <div class="node-row">
+            <div class="node-name">node-${n.idx}${n.isolated ? '<span class="iso-badge">ISO</span>' : ''}</div>
+            <div class="node-hash">${shorten(n.best_hash) || "—"}</div>
+          </div>
+          <div class="node-stats">
+            <span>height</span><b>${fmt(n.blocks)}</b>
+            <span>peers</span><b>${fmt(n.peers)}</b>
+            <span>mempool</span><b>${fmt(n.mempool_tx)}</b>
+            <span>uptime</span><b>${n.uptime ? Math.floor(n.uptime/60) + "m" : "-"}</b>
+          </div>
+          <div class="node-actions">
+            <button onclick="quickMine(${n.idx}, 1)">Mine 1</button>
+            <button onclick="quickMine(${n.idx}, 10)">Mine 10</button>
+            <button class="${n.isolated ? "" : "danger"}"
+                    onclick="${n.isolated ? `quickHeal(${n.idx})` : `quickIsolate(${n.idx})`}">
+              ${n.isolated ? "Heal" : "Isolate"}
+            </button>
+          </div>
+        `;
+        wrap.appendChild(div);
+      });
+    }
+
+    function renderEvents(s) {
+      const list = document.getElementById("events");
+      list.innerHTML = (s.events || []).map(e => `
+        <div class="event" data-kind="${e.kind}">
+          <span class="event-time">${fmtTime(e.ts)}</span>
+          <span class="event-msg">${e.msg}</span>
+        </div>
+      `).join("");
+    }
+
+    function renderAuto(s) {
+      const auto = s.auto || {};
+      document.getElementById("autoMine").classList.toggle("on", !!auto.mining);
+      document.getElementById("autoTx").classList.toggle("on", !!auto.tx);
+      document.getElementById("autoMine").textContent = auto.mining ? "auto-mine ON" : "auto-mine OFF";
+      document.getElementById("autoTx").textContent = auto.tx ? "auto-tx ON" : "auto-tx OFF";
+      // only update inputs when not focused, so we don't fight the user's typing
+      const pb = document.getElementById("paceBlock");
+      const pt = document.getElementById("paceTx");
+      if (document.activeElement !== pb && auto.block_interval !== undefined) pb.value = auto.block_interval;
+      if (document.activeElement !== pt && auto.tx_interval !== undefined) pt.value = auto.tx_interval;
+    }
+
+    function syncSelectOptions(s) {
+      const ids = s.nodes.map(n => n.idx);
+      ["mineNode", "txSrc", "txDst", "partNode"].forEach(id => {
+        const sel = document.getElementById(id);
+        const cur = sel.value;
+        const want = ids.map(i => `<option value="${i}">node-${i}</option>`).join("");
+        if (sel.dataset.want !== want) {
+          sel.innerHTML = want;
+          sel.dataset.want = want;
+          if (ids.includes(parseInt(cur))) sel.value = cur;
+        }
+      });
+      // default txDst != txSrc on first paint
+      const src = document.getElementById("txSrc").value;
+      const dst = document.getElementById("txDst");
+      if (dst.value === src && ids.length > 1) {
+        dst.value = ids.find(i => i.toString() !== src);
+      }
+    }
+
+    // ---------- Action handlers ----------
+    async function mine() {
+      const node = parseInt(document.getElementById("mineNode").value);
+      const blocks = parseInt(document.getElementById("mineCount").value);
+      const r = await api("/api/mine", { method: "POST", body: { node, blocks }});
+      toast(`mined ${r.blocks} on node-${node}`);
+      tick();
+    }
+    function setMineCount(n) {
+      document.getElementById("mineCount").value = n;
+      mine();
+    }
+    async function quickMine(node, blocks) {
+      await api("/api/mine", { method: "POST", body: { node, blocks }});
+      toast(`mined ${blocks} on node-${node}`);
+      tick();
+    }
+    async function sendTx() {
+      const src = parseInt(document.getElementById("txSrc").value);
+      const dst = parseInt(document.getElementById("txDst").value);
+      const amount = parseFloat(document.getElementById("txAmount").value);
+      const r = await api("/api/tx", { method: "POST", body: { src, dst, amount }});
+      toast(`tx ${r.txid?.slice(0,8) || "?"}…  ${src}→${dst}`);
+      tick();
+    }
+    async function storm() {
+      const count = parseInt(document.getElementById("stormCount").value);
+      const r = await api("/api/storm", { method: "POST", body: { count }});
+      toast(`storm: ${r.sent} sent / ${r.failed} failed`);
+      tick();
+    }
+    async function isolate() {
+      const node = parseInt(document.getElementById("partNode").value);
+      await api("/api/isolate", { method: "POST", body: { node }});
+      toast(`isolated node-${node}`, "error");
+      tick();
+    }
+    async function heal() {
+      const node = parseInt(document.getElementById("partNode").value);
+      await api("/api/heal", { method: "POST", body: { node }});
+      toast(`healed node-${node}`);
+      tick();
+    }
+    async function quickIsolate(node) { await api("/api/isolate", { method: "POST", body: { node }}); toast(`isolated node-${node}`, "error"); tick(); }
+    async function quickHeal(node)    { await api("/api/heal",    { method: "POST", body: { node }}); toast(`healed node-${node}`); tick(); }
+    async function toggleAuto(which) {
+      const cur = (state.latest && state.latest.auto && state.latest.auto[which]) || false;
+      const r = await api("/api/auto", { method: "POST", body: { [which]: !cur }});
+      toast(`${which} ${r[which] ? "ON" : "OFF"}`);
+      tick();
+    }
+    async function updatePace() {
+      const block_interval = parseFloat(document.getElementById("paceBlock").value);
+      const tx_interval = parseFloat(document.getElementById("paceTx").value);
+      const r = await api("/api/pace", { method: "POST", body: { block_interval, tx_interval }});
+      toast(`pace: block=${r.block_interval}s  tx=${r.tx_interval}s`);
+      tick();
+    }
+
+    tick();
+    setInterval(tick, 1500);
+  </script>
+</body>
+</html>

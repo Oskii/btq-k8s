@@ -334,13 +334,14 @@ cmd_dash() {
 
   $(c_green "BTQnet is running.")  network=$(c_yellow "${network}")
 
-  Grafana     :  http://localhost:30030      (admin / btqnet)
-  Prometheus  :  http://localhost:30090
-  Controller  :  http://localhost:30100/metrics
-  Loki        :  http://localhost:30310
+  $(c_green "Console UI"): $(c_yellow "http://localhost:30200")     ← buttons / sim controls
+  Grafana   : http://localhost:30030      (admin / btqnet)
+  Prometheus: http://localhost:30090
+  Metrics   : http://localhost:30100/metrics
+  Loki      : http://localhost:30310
 
-  $(c_dim "Tip: use \`btqnet status\` to see pods, \`btqnet logs 0\` to tail node-0,")
-  $(c_dim "     \`btqnet cli 0 -- getblockchaininfo\` to query an RPC.")
+  $(c_dim "Tip: \`btqnet status\` for pods, \`btqnet logs 0\` to tail node-0,")
+  $(c_dim "     \`btqnet cli 0 -- getblockchaininfo\` for direct RPC.")
 
 EOF
     if [ "${network}" != "regtest" ]; then

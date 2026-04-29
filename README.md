@@ -30,7 +30,7 @@ right `-chain=...` flag and probe the right ports.
 | component | image | what it does |
 |---|---|---|
 | **btq-node** (StatefulSet, 1..20 replicas) | `btq-node:dev` | A real `btqd` from `/home/o/BTQ/btq-core/release/linux-x86_64/`, running in regtest with full RPC/ZMQ exposure. Every pod auto-discovers its peers via the headless service and `-addnode`s every other node, producing a true full-mesh P2P network. |
-| **btq-controller** (Deployment) | `btq-controller:dev` | A small Python service that (a) scrapes every node's RPC every 3 s and re-publishes ~25 Prometheus metrics, (b) generates blocks on a rotating node every 10 s after a 101-block bootstrap, (c) sends random transactions every 4 s so the mempool is never empty. |
+| **btq-controller** (Deployment) | `btq-controller:dev` | A small Python service that (a) scrapes every node's RPC every 3 s and re-publishes ~25 Prometheus metrics, (b) generates blocks on a rotating node every 10 s after a 101-block bootstrap, (c) sends random transactions every 4 s so the mempool is never empty, **and (d) serves an interactive console UI at http://localhost:30200 with buttons to mine, send tx, partition / heal nodes, run tx storms, and toggle the auto loops.** |
 | **Prometheus** | `prom/prometheus:v3.1.0` | Scrapes the controller plus any pod with `prometheus.io/scrape: true`. |
 | **Grafana** | `grafana/grafana:11.4.0` | Pre-provisioned with the BTQnet dashboard as the default home. Reachable at `http://localhost:30030` (admin / btqnet). |
 | **Loki** | `grafana/loki:3.3.2` | Single-binary monolithic. Holds all `btqd` debug logs for ad-hoc querying. |
@@ -101,13 +101,65 @@ they're missing, creates the kind cluster, loads the images, applies all
 manifests, and waits for everything to be ready. It ends by printing:
 
 ```
-  Grafana     :  http://localhost:30030      (admin / btqnet)
-  Prometheus  :  http://localhost:30090
-  Controller  :  http://localhost:30100/metrics
-  Loki        :  http://localhost:30310
+  Console UI : http://localhost:30200      ← buttons / sim controls
+  Grafana    : http://localhost:30030      (admin / btqnet)
+  Prometheus : http://localhost:30090
+  Metrics    : http://localhost:30100/metrics
+  Loki       : http://localhost:30310
 ```
 
-The default home dashboard is `BTQnet — Cluster Overview`.
+The default Grafana home dashboard is `BTQnet — Cluster Overview`.
+
+---
+
+## Console UI
+
+`http://localhost:30200` is a single-page web console served by the
+controller pod. Open it next to Grafana and use the buttons to *cause*
+network events while you watch them propagate.
+
+It always shows the current state of the cluster:
+
+- **Top bar**: network name, reachable / total nodes, max-height,
+  height-spread, distinct-best-block count (turns red on a fork), live
+  toggle status of `auto-mine` / `auto-tx`.
+- **Node grid** (one card per pod): height, peer count, mempool depth,
+  uptime, best-block hash. Cards are coloured by the *fork* their best
+  block belongs to — when a partition forks the cluster, you can see
+  it instantly because some cards switch colour. Isolated nodes get a
+  red `ISO` badge.
+- **Action panel**:
+  - **Mine blocks** — pick a node, set count, hit Mine (or use the
+    `×1 / ×5 / ×25 / ×101` quick buttons).
+  - **Send transaction** — `from` → `to` with an explicit amount, or
+    fire a **Tx storm** of N random spends.
+  - **Network partition / fork** — `Isolate` flips
+    `setnetworkactive=false` on a node (every connection drops, no
+    new ones are dialled). `Heal` flips it back on and `addnode
+    onetry`s every peer to reconnect immediately.
+  - **Auto loops** — pause/resume the controller's mining and tx
+    threads; tweak `BLOCK_INTERVAL` and `TX_INTERVAL` live.
+- **Event log** (right side): scrolling, colour-coded record of every
+  action you and the auto loops have taken.
+
+### The fork demo, all from buttons
+
+1. Click **auto-mine OFF** so nothing else is producing blocks.
+2. In the partition row, pick `node-2`, click **Isolate** — its card
+   turns red with an `ISO` badge.
+3. Click `Mine ×5` on node-2's card — node-2's chain advances, but
+   only locally.
+4. Click `Mine ×3` on node-0's card — the rest of the cluster moves
+   forward on a different chain.
+5. The node cards split into two colours, the top bar's "distinct
+   tips" pill jumps to **2** (red), and `spread` ticks up.
+6. Click **Heal** on node-2 — it reconnects, downloads the longer
+   chain (node-2's own 5-block branch), reorganises, and within a
+   couple of seconds every card converges back to one colour and
+   `spread = 0`.
+
+This is the same flow described in the recipes section below, but
+without ever leaving the browser.
 
 ---
 
@@ -318,9 +370,10 @@ btq-k8s/
 │   │   ├── entrypoint.sh      ← parses ordinal from $HOSTNAME, builds -addnode list
 │   │   ├── btqd               ← stripped binary copied from btq-core/release/linux-x86_64
 │   │   └── btq-cli
-│   └── controller/            ← analytics + traffic generator
+│   └── controller/            ← analytics + traffic generator + UI/REST
 │       ├── Dockerfile
-│       ├── controller.py      ← scrape loop + mining loop + tx loop in one process
+│       ├── controller.py      ← scrape loop + mining loop + tx loop + UI server
+│       ├── static/index.html  ← single-page console served at :30200
 │       └── requirements.txt
 ├── k8s/                       ← raw manifests
 │   ├── kind-cluster.yaml      ← kind cluster + extraPortMappings (30030/30090/30100/30310)

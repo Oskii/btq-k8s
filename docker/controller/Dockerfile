@@ -10,7 +10,8 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
 COPY controller.py /app/controller.py
+COPY static/ /app/static/
 
-EXPOSE 9100
+EXPOSE 9100 9200
 
 ENTRYPOINT ["python", "/app/controller.py"]
