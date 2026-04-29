@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: btq-cluster-config
+  namespace: btqnet
+data:
+  BTQ_NODES: "__BTQ_NODES__"
+  BTQ_NETWORK: "regtest"
+  BTQ_HEADLESS: "btq-headless"
+  BTQ_NAMESPACE: "btqnet"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: btq-rpc-credentials
+  namespace: btqnet
+type: Opaque
+stringData:
+  BTQ_RPC_USER: "btq"
+  BTQ_RPC_PASSWORD: "btq"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: btq-node
+  namespace: btqnet
+  labels:
+    app.kubernetes.io/name: btq-node
+spec:
+  serviceName: btq-headless
+  replicas: __BTQ_NODES__
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: btq-node
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: btq-node
+        app.kubernetes.io/part-of: btqnet
+      annotations:
+        prometheus.io/scrape: "false"
+    spec:
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: btqd
+          image: btq-node:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: btq-cluster-config
+            - secretRef:
+                name: btq-rpc-credentials
+          ports:
+            - name: rpc
+              containerPort: 18443
+            - name: p2p
+              containerPort: 18444
+            - name: zmq
+              containerPort: 28332
+            - name: zmq-seq
+              containerPort: 28333
+          readinessProbe:
+            tcpSocket:
+              port: 18443
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 18444
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1500m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/btq/data
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi

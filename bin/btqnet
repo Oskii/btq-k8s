@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# btqnet — control plane CLI for the local BTQ multi-node Kubernetes lab.
+#
+# Subcommands:
+#   up [N]              build images, ensure kind cluster, deploy N nodes (default 5)
+#   down                delete the kind cluster (everything)
+#   scale N             scale running cluster to N nodes (1..20)
+#   status              kubectl get all + node summary
+#   cli IDX -- ARGS     run `btq-cli` against node IDX (e.g. `btqnet cli 2 -- getblockcount`)
+#   rpc  IDX METHOD ... call an arbitrary RPC method on node IDX
+#   mine [IDX] [N]      generate N blocks on node IDX (defaults: idx=0, n=1)
+#   peers IDX           show node IDX's peer table
+#   logs TARGET         follow logs (TARGET = a node index, or 'controller', 'grafana', 'prometheus', 'loki')
+#   dash                print and (best-effort) open dashboard URLs
+#   metrics             curl the controller's /metrics endpoint
+#   build               (re)build the node + controller images and load into kind
+#   help
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CLUSTER_NAME="btqnet"
+NAMESPACE="btqnet"
+NODE_IMAGE="btq-node:dev"
+CONTROLLER_IMAGE="btq-controller:dev"
+RENDERED_DIR="${ROOT}/.rendered"
+mkdir -p "${RENDERED_DIR}"
+
+KCTL=( kubectl --context "kind-${CLUSTER_NAME}" )
+
+c_red()    { printf '\033[31m%s\033[0m' "$*"; }
+c_green()  { printf '\033[32m%s\033[0m' "$*"; }
+c_yellow() { printf '\033[33m%s\033[0m' "$*"; }
+c_blue()   { printf '\033[34m%s\033[0m' "$*"; }
+c_dim()    { printf '\033[2m%s\033[0m' "$*"; }
+
+log()  { echo "$(c_blue "[btqnet]")  $*"; }
+warn() { echo "$(c_yellow "[btqnet]") $*"; }
+die()  { echo "$(c_red   "[btqnet!]") $*" >&2; exit 1; }
+
+require() {
+    local missing=()
+    for cmd in "$@"; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        die "missing required tools: ${missing[*]}"
+    fi
+}
+
+cluster_exists() {
+    kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"
+}
+
+ensure_cluster() {
+    require kind kubectl docker
+    if cluster_exists; then
+        log "kind cluster '${CLUSTER_NAME}' already exists"
+        return 0
+    fi
+    log "creating kind cluster '${CLUSTER_NAME}' ..."
+    kind create cluster --config "${ROOT}/k8s/kind-cluster.yaml" --wait 2m
+}
+
+ensure_images() {
+    require docker
+    if ! docker image inspect "${NODE_IMAGE}" >/dev/null 2>&1; then
+        log "building ${NODE_IMAGE} ..."
+        docker build -t "${NODE_IMAGE}" "${ROOT}/docker/node"
+    fi
+    if ! docker image inspect "${CONTROLLER_IMAGE}" >/dev/null 2>&1; then
+        log "building ${CONTROLLER_IMAGE} ..."
+        docker build -t "${CONTROLLER_IMAGE}" "${ROOT}/docker/controller"
+    fi
+}
+
+load_images() {
+    log "loading images into kind cluster '${CLUSTER_NAME}' ..."
+    kind load docker-image "${NODE_IMAGE}" "${CONTROLLER_IMAGE}" --name "${CLUSTER_NAME}"
+}
+
+cmd_build() {
+    log "(re)building node and controller images ..."
+    docker build -t "${NODE_IMAGE}"       "${ROOT}/docker/node"
+    docker build -t "${CONTROLLER_IMAGE}" "${ROOT}/docker/controller"
+    if cluster_exists; then
+        load_images
+        log "rolling restarts ..."
+        "${KCTL[@]}" -n "${NAMESPACE}" rollout restart statefulset/btq-node || true
+        "${KCTL[@]}" -n "${NAMESPACE}" rollout restart deployment/btq-controller || true
+    fi
+}
+
+render_manifests() {
+    local nodes="$1"
+    local out="${RENDERED_DIR}/manifests.yaml"
+    : > "${out}"
+    for f in 00-namespace.yaml 10-btq-services.yaml 20-btq-statefulset.yaml \
+             30-controller.yaml 40-prometheus.yaml 50-loki.yaml 60-grafana.yaml; do
+        sed "s/__BTQ_NODES__/${nodes}/g" "${ROOT}/k8s/${f}" >> "${out}"
+        echo "---" >> "${out}"
+    done
+    echo "${out}"
+}
+
+apply_dashboard_cm() {
+    log "creating/updating Grafana dashboards ConfigMap ..."
+    "${KCTL[@]}" -n "${NAMESPACE}" create configmap grafana-dashboards \
+        --from-file="${ROOT}/grafana/dashboards/" \
+        -o yaml --dry-run=client | "${KCTL[@]}" apply -f -
+}
+
+cmd_up() {
+    local nodes="${1:-5}"
+    [[ "${nodes}" =~ ^[0-9]+$ ]] || die "node count must be an integer"
+    if [ "${nodes}" -lt 1 ] || [ "${nodes}" -gt 20 ]; then
+        die "node count must be between 1 and 20"
+    fi
+
+    ensure_images
+    ensure_cluster
+    load_images
+
+    local manifests
+    manifests="$(render_manifests "${nodes}")"
+    log "applying manifests for ${nodes} nodes ..."
+    "${KCTL[@]}" apply -f "${manifests}"
+    apply_dashboard_cm
+
+    # Force grafana to pick up dashboards CM if it was just created
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout restart deployment/grafana >/dev/null 2>&1 || true
+
+    log "waiting for BTQ nodes to be ready ..."
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout status statefulset/btq-node --timeout=5m
+
+    log "waiting for controller / prometheus / grafana / loki ..."
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout status deployment/btq-controller --timeout=2m || true
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout status deployment/prometheus     --timeout=2m || true
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout status deployment/grafana        --timeout=2m || true
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout status deployment/loki           --timeout=2m || true
+
+    cmd_dash
+}
+
+cmd_scale() {
+    local nodes="${1:?usage: btqnet scale N}"
+    [[ "${nodes}" =~ ^[0-9]+$ ]] || die "node count must be an integer"
+    if [ "${nodes}" -lt 1 ] || [ "${nodes}" -gt 20 ]; then
+        die "node count must be between 1 and 20"
+    fi
+    local manifests
+    manifests="$(render_manifests "${nodes}")"
+    log "applying manifests for ${nodes} nodes ..."
+    "${KCTL[@]}" apply -f "${manifests}"
+    log "rolling restart so existing nodes pick up new -addnode list ..."
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout restart statefulset/btq-node
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout restart deployment/btq-controller
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout status  statefulset/btq-node --timeout=5m
+}
+
+cmd_down() {
+    if cluster_exists; then
+        log "deleting kind cluster '${CLUSTER_NAME}' ..."
+        kind delete cluster --name "${CLUSTER_NAME}"
+    else
+        warn "no cluster '${CLUSTER_NAME}' to delete"
+    fi
+}
+
+cmd_status() {
+    cluster_exists || die "cluster '${CLUSTER_NAME}' is not running"
+    "${KCTL[@]}" -n "${NAMESPACE}" get pods -o wide
+    echo
+    "${KCTL[@]}" -n "${NAMESPACE}" get svc
+    echo
+    log "current node count: $("${KCTL[@]}" -n "${NAMESPACE}" get statefulset btq-node -o jsonpath='{.status.replicas}' 2>/dev/null || echo '?')"
+}
+
+pod_for_node() {
+    local idx="$1"
+    echo "btq-node-${idx}"
+}
+
+cmd_cli() {
+    local idx="${1:?usage: btqnet cli IDX -- ARGS}"; shift || true
+    [[ "$1" == "--" ]] && shift
+    local pod
+    pod="$(pod_for_node "${idx}")"
+    "${KCTL[@]}" -n "${NAMESPACE}" exec -i "${pod}" -- \
+        btq-cli -regtest -rpcuser=btq -rpcpassword=btq "$@"
+}
+
+cmd_rpc() {
+    local idx="${1:?usage: btqnet rpc IDX METHOD [PARAMS...]}"; shift
+    local method="${1:?missing METHOD}"; shift || true
+    cmd_cli "${idx}" -- "${method}" "$@"
+}
+
+cmd_mine() {
+    local idx="${1:-0}"
+    local n="${2:-1}"
+    local pod
+    pod="$(pod_for_node "${idx}")"
+    log "mining ${n} block(s) on ${pod} ..."
+    local addr
+    addr="$("${KCTL[@]}" -n "${NAMESPACE}" exec -i "${pod}" -- bash -c '
+        btq-cli -regtest -rpcuser=btq -rpcpassword=btq -rpcwallet=default getnewaddress 2>/dev/null \
+        || ( btq-cli -regtest -rpcuser=btq -rpcpassword=btq createwallet default >/dev/null 2>&1; \
+             btq-cli -regtest -rpcuser=btq -rpcpassword=btq -rpcwallet=default getnewaddress )
+    ')"
+    [ -n "${addr}" ] || die "could not derive address on ${pod}"
+    "${KCTL[@]}" -n "${NAMESPACE}" exec -i "${pod}" -- \
+        btq-cli -regtest -rpcuser=btq -rpcpassword=btq generatetoaddress "${n}" "${addr}"
+}
+
+cmd_peers() {
+    local idx="${1:-0}"
+    cmd_cli "${idx}" -- getpeerinfo | \
+        python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+print(f"{len(data)} peers")
+for p in data:
+    print(f'\''  {p.get("addr","?"):28s}  in={p.get("inbound", False)!s:5s}  '\''
+          f'\''ping={p.get("pingtime","-"):>6}  height={p.get("startingheight","?"):>5}  '\''
+          f'\''subver={p.get("subver","?")[:40]}'\'')
+' || true
+}
+
+cmd_logs() {
+    local target="${1:?usage: btqnet logs TARGET}"
+    case "${target}" in
+        ''|*[!0-9]*)  # non-numeric, treat as deployment name
+            "${KCTL[@]}" -n "${NAMESPACE}" logs -f "deploy/${target}" --max-log-requests=20
+            ;;
+        *)            # numeric, treat as node ordinal
+            "${KCTL[@]}" -n "${NAMESPACE}" logs -f "btq-node-${target}"
+            ;;
+    esac
+}
+
+cmd_dash() {
+    cat <<EOF
+
+  $(c_green "BTQnet is running.")
+
+  Grafana     :  http://localhost:30030      (admin / btqnet)
+  Prometheus  :  http://localhost:30090
+  Controller  :  http://localhost:30100/metrics
+  Loki        :  http://localhost:30310
+
+  $(c_dim "Tip: use \`btqnet status\` to see pods, \`btqnet logs 0\` to tail node-0,")
+  $(c_dim "     \`btqnet cli 0 -- getblockcount\` to query an RPC.")
+
+EOF
+}
+
+cmd_metrics() {
+    curl -sS http://localhost:30100/metrics | head -200
+}
+
+cmd_help() {
+    sed -n '/^# btqnet —/,/^# *help$/p' "$0" | sed 's/^# *//'
+}
+
+main() {
+    local sub="${1:-help}"
+    shift || true
+    case "${sub}" in
+        up)       cmd_up      "$@" ;;
+        down)     cmd_down    "$@" ;;
+        scale)    cmd_scale   "$@" ;;
+        status)   cmd_status  "$@" ;;
+        cli)      cmd_cli     "$@" ;;
+        rpc)      cmd_rpc     "$@" ;;
+        mine)     cmd_mine    "$@" ;;
+        peers)    cmd_peers   "$@" ;;
+        logs)     cmd_logs    "$@" ;;
+        dash|dashboard) cmd_dash "$@" ;;
+        metrics)  cmd_metrics "$@" ;;
+        build)    cmd_build   "$@" ;;
+        help|-h|--help) cmd_help ;;
+        *) die "unknown subcommand '${sub}'.  try \`btqnet help\`" ;;
+    esac
+}
+
+main "$@"

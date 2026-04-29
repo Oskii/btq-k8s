@@ -1,0 +1,209 @@
+{
+  "title": "BTQnet — Cluster Overview",
+  "uid": "btqnet-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["btqnet", "btq", "blockchain"],
+  "timezone": "browser",
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(btq_node_up, node)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Reachable / Total Nodes",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_cluster_nodes_reachable", "legendFormat": "reachable", "refId": "A" },
+        { "expr": "btq_cluster_nodes_total", "legendFormat": "total", "refId": "B" }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Cluster Height (max)",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_cluster_height_max", "refId": "A" }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Height Spread (max - min)",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_cluster_height_spread", "refId": "A" }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] } } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Distinct Best-Block Hashes",
+      "description": "Number of distinct best-block hashes across reachable nodes. >1 means the cluster is currently forked.",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_cluster_distinct_best_blocks", "refId": "A" }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 2 }, { "color": "red", "value": 3 }] } } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Blocks Mined / sec (cluster)",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(rate(btq_controller_blocks_mined_total[1m]))", "refId": "A" }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "TX Sent / sec (cluster)",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(rate(btq_controller_tx_sent_total[1m]))", "refId": "A" }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Block Height per Node",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_node_blocks{node=~\"$node\"}", "legendFormat": "{{node}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "pointSize": 4, "showPoints": "never", "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Peer Count per Node",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_node_peer_count{node=~\"$node\", direction=\"total\"}", "legendFormat": "{{node}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Block Propagation Latency (s, last block per node)",
+      "description": "Time between a block first being seen anywhere in the cluster and being seen on the labelled node.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_block_propagation_last_seconds{node=~\"$node\"}", "legendFormat": "{{node}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 35 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "mean", "max"] } }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Mempool Size per Node",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_node_mempool_tx{node=~\"$node\"}", "legendFormat": "{{node}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "P2P Bytes Received / sec",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(btq_node_bytes_recv_total{node=~\"$node\"}[1m])", "legendFormat": "{{node}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "mean"] } }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "P2P Bytes Sent / sec",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(btq_node_bytes_sent_total{node=~\"$node\"}[1m])", "legendFormat": "{{node}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "mean"] } }
+    },
+    {
+      "id": 16,
+      "type": "table",
+      "title": "Chain Tips per Node (current)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 30 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "btq_node_chain_tips{node=~\"$node\"}", "legendFormat": "{{node}} {{status}}", "refId": "A", "instant": true, "format": "table" }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true } } }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Blocks Mined per Node",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 30 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "increase(btq_controller_blocks_mined_total{node=~\"$node\"}[1m])", "legendFormat": "{{node}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 35 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "sum"] } }
+    },
+    {
+      "id": 18,
+      "type": "logs",
+      "title": "BTQ Node Logs (Loki)",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 39 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        { "expr": "{namespace=\"btqnet\", app_kubernetes_io_name=\"btq-node\"}", "refId": "A" }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "enableLogDetails": false, "dedupStrategy": "exact", "sortOrder": "Descending" }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: btqnet
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Grafana
+      - containerPort: 30030
+        hostPort: 30030
+        protocol: TCP
+      # Prometheus
+      - containerPort: 30090
+        hostPort: 30090
+        protocol: TCP
+      # Controller raw metrics (Prometheus exposition)
+      - containerPort: 30100
+        hostPort: 30100
+        protocol: TCP
+      # Loki HTTP (optional direct query)
+      - containerPort: 30310
+        hostPort: 30310
+        protocol: TCP

@@ -1,0 +1,44 @@
+# Headless Service powers stable per-pod DNS:
+#   btq-node-N.btq-headless.btqnet.svc.cluster.local
+# This is what the entrypoint uses for -addnode and what the controller
+# uses for RPC scraping.
+apiVersion: v1
+kind: Service
+metadata:
+  name: btq-headless
+  namespace: btqnet
+  labels:
+    app.kubernetes.io/name: btq-node
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: btq-node
+  ports:
+    - name: p2p
+      port: 18444
+      targetPort: 18444
+    - name: rpc
+      port: 18443
+      targetPort: 18443
+    - name: zmq
+      port: 28332
+      targetPort: 28332
+    - name: zmq-seq
+      port: 28333
+      targetPort: 28333
+---
+# Round-robin RPC service; useful when you don't care which node answers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: btq-rpc
+  namespace: btqnet
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: btq-node
+  ports:
+    - name: rpc
+      port: 18443
+      targetPort: 18443
