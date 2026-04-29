@@ -61,6 +61,12 @@ spec:
                 name: btq-cluster-config
             - secretRef:
                 name: btq-rpc-credentials
+          # Pacing knobs (only effective on regtest, where mining/tx
+          # generation is enabled by default).  ENABLE_MINING /
+          # ENABLE_TX / ENABLE_BOOTSTRAP are intentionally NOT set here
+          # so the controller picks per-network defaults: regtest = on,
+          # everything else = off.  Override at runtime with e.g.
+          #   kubectl set env deploy/btq-controller ENABLE_MINING=1
           env:
             - name: SCRAPE_INTERVAL
               value: "3"
@@ -68,10 +74,6 @@ spec:
               value: "10"
             - name: TX_INTERVAL
               value: "4"
-            - name: ENABLE_MINING
-              value: "1"
-            - name: ENABLE_TX
-              value: "1"
           ports:
             - name: metrics
               containerPort: 9100

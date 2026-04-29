@@ -5,7 +5,7 @@ metadata:
   namespace: btqnet
 data:
   BTQ_NODES: "__BTQ_NODES__"
-  BTQ_NETWORK: "regtest"
+  BTQ_NETWORK: "__BTQ_NETWORK__"
   BTQ_HEADLESS: "btq-headless"
   BTQ_NAMESPACE: "btqnet"
 ---
@@ -54,21 +54,21 @@ spec:
                 name: btq-rpc-credentials
           ports:
             - name: rpc
-              containerPort: 18443
+              containerPort: __RPC_PORT__
             - name: p2p
-              containerPort: 18444
+              containerPort: __P2P_PORT__
             - name: zmq
               containerPort: 28332
             - name: zmq-seq
               containerPort: 28333
           readinessProbe:
             tcpSocket:
-              port: 18443
+              port: __RPC_PORT__
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             tcpSocket:
-              port: 18444
+              port: __P2P_PORT__
             initialDelaySeconds: 30
             periodSeconds: 30
           resources:
@@ -77,11 +77,19 @@ spec:
               memory: "256Mi"
             limits:
               cpu: "1500m"
-              memory: "1Gi"
+              memory: "__BTQ_MEMORY__"
           volumeMounts:
             - name: data
               mountPath: /var/lib/btq/data
-      volumes:
-        - name: data
-          emptyDir:
-            sizeLimit: 1Gi
+  # PersistentVolumeClaim per pod so IBD progress (and wallets) survive
+  # pod restarts and rolling updates.  kind ships a default storage
+  # class (`standard`) backed by local-path-provisioner so this works
+  # out of the box.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: __BTQ_STORAGE__

@@ -2,6 +2,9 @@
 #   btq-node-N.btq-headless.btqnet.svc.cluster.local
 # This is what the entrypoint uses for -addnode and what the controller
 # uses for RPC scraping.
+#
+# Port numbers are templated by bin/btqnet because they differ per chain
+# (regtest 18443/18444, test 18332/18333, signet 38332/38333, main 8332/8333).
 apiVersion: v1
 kind: Service
 metadata:
@@ -16,11 +19,11 @@ spec:
     app.kubernetes.io/name: btq-node
   ports:
     - name: p2p
-      port: 18444
-      targetPort: 18444
+      port: __P2P_PORT__
+      targetPort: __P2P_PORT__
     - name: rpc
-      port: 18443
-      targetPort: 18443
+      port: __RPC_PORT__
+      targetPort: __RPC_PORT__
     - name: zmq
       port: 28332
       targetPort: 28332
@@ -40,5 +43,5 @@ spec:
     app.kubernetes.io/name: btq-node
   ports:
     - name: rpc
-      port: 18443
-      targetPort: 18443
+      port: __RPC_PORT__
+      targetPort: __RPC_PORT__

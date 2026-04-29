@@ -53,15 +53,39 @@ NAMESPACE = os.environ.get("BTQ_NAMESPACE", "btqnet")
 NETWORK = os.environ.get("BTQ_NETWORK", "regtest")
 RPC_USER = os.environ.get("BTQ_RPC_USER", "btq")
 RPC_PASS = os.environ.get("BTQ_RPC_PASSWORD", "btq")
-RPC_PORT = int(os.environ.get("BTQ_RPC_PORT", "18443"))
+
+_DEFAULT_RPC_PORT = {
+    "regtest": 18443,
+    "test": 18332,
+    "testnet": 18332,
+    "signet": 38332,
+    "main": 8332,
+    "mainnet": 8332,
+}
+RPC_PORT = int(os.environ.get("BTQ_RPC_PORT") or _DEFAULT_RPC_PORT.get(NETWORK, 18443))
 
 SCRAPE_INTERVAL = float(os.environ.get("SCRAPE_INTERVAL", "3"))
 BLOCK_INTERVAL = float(os.environ.get("BLOCK_INTERVAL", "10"))
 TX_INTERVAL = float(os.environ.get("TX_INTERVAL", "4"))
 BOOTSTRAP_BLOCKS = int(os.environ.get("BOOTSTRAP_BLOCKS", "101"))
-ENABLE_MINING = os.environ.get("ENABLE_MINING", "1") == "1"
-ENABLE_TX = os.environ.get("ENABLE_TX", "1") == "1"
 METRICS_PORT = int(os.environ.get("METRICS_PORT", "9100"))
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    val = os.environ.get(name)
+    if val is None or val == "":
+        return default
+    return val.lower() in ("1", "true", "yes", "on")
+
+
+# Mining and tx-generation only make sense on regtest, where the
+# controller can produce blocks instantly via generatetoaddress.  On
+# testnet/signet/main, real PoW + real funds are required, so we
+# default to "scrape only" but still allow explicit opt-in via env.
+_is_regtest = NETWORK == "regtest"
+ENABLE_MINING = _bool_env("ENABLE_MINING", _is_regtest)
+ENABLE_TX = _bool_env("ENABLE_TX", _is_regtest)
+ENABLE_BOOTSTRAP = _bool_env("ENABLE_BOOTSTRAP", _is_regtest)
 
 # Controller domain — used to make every node's "node" label stable.
 NODE_PREFIX = os.environ.get("BTQ_NODE_PREFIX", "btq-node")
@@ -532,8 +556,9 @@ def bootstrap() -> None:
 
     Mines in chunks so a single RPC doesn't time out, and idempotently
     skips any chunks already mined (e.g. if the controller restarts).
+    Only runs on regtest (or when explicitly forced via ENABLE_BOOTSTRAP).
     """
-    if not ENABLE_MINING:
+    if not ENABLE_MINING or not ENABLE_BOOTSTRAP:
         return
     first = wait_for_any_node()
     if first is None:
@@ -661,9 +686,10 @@ def tx_loop() -> None:
 
 def main() -> None:
     log.info(
-        "btqnet controller starting :: nodes=%d headless=%s rpc_port=%d "
-        "scrape=%.1fs block=%.1fs tx=%.1fs",
-        NODES, HEADLESS, RPC_PORT, SCRAPE_INTERVAL, BLOCK_INTERVAL, TX_INTERVAL,
+        "btqnet controller starting :: nodes=%d network=%s headless=%s "
+        "rpc_port=%d scrape=%.1fs mining=%s tx=%s bootstrap=%s",
+        NODES, NETWORK, HEADLESS, RPC_PORT, SCRAPE_INTERVAL,
+        ENABLE_MINING, ENABLE_TX, ENABLE_BOOTSTRAP,
     )
     M_CLUSTER_NODES_TOTAL.set(NODES)
     start_http_server(METRICS_PORT, registry=REG)

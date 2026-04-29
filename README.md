@@ -10,10 +10,18 @@ The whole thing lives in this directory and is driven by a single CLI:
 [`bin/btqnet`](bin/btqnet).
 
 ```
-$ bin/btqnet up 5      # 5 BTQ nodes + observability stack
-$ bin/btqnet scale 20  # grow to 20 nodes, no data loss
-$ bin/btqnet down      # delete the kind cluster, free resources
+$ bin/btqnet up 5             # 5 BTQ nodes on regtest + observability stack
+$ bin/btqnet up 5 testnet     # 5 BTQ nodes on the real BTQ testnet
+$ bin/btqnet up testnet 10    # (positional args may come in either order)
+$ bin/btqnet scale 20         # grow to 20 nodes, no data loss
+$ bin/btqnet down             # delete the kind cluster, free resources
 ```
+
+`bin/btqnet up` accepts an optional second arg specifying the chain:
+`regtest` (default), `testnet` / `test`, `signet`, or `main` /
+`mainnet`. The choice is persisted in `.rendered/network` so subsequent
+`scale`, `cli`, `rpc`, `peers` etc. commands automatically use the
+right `-chain=...` flag and probe the right ports.
 
 ---
 
@@ -106,14 +114,16 @@ The default home dashboard is `BTQnet — Cluster Overview`.
 ## CLI
 
 ```
-bin/btqnet up [N]                     # 1 ≤ N ≤ 20, default 5
+bin/btqnet up [N] [NETWORK]           # 1 ≤ N ≤ 20 (default 5), NETWORK ∈
+                                      # {regtest, testnet, signet, main} (default regtest)
 bin/btqnet down                       # delete the kind cluster
-bin/btqnet scale N                    # rolling scale to N nodes
+bin/btqnet scale N                    # rolling scale to N nodes (network unchanged)
+bin/btqnet chain                      # print the network the cluster is on
 bin/btqnet status                     # kubectl get pods + node count
 bin/btqnet build                      # rebuild images, hot-reload pods
 bin/btqnet cli IDX -- ARGS ...        # run btq-cli on node IDX
 bin/btqnet rpc IDX METHOD [PARAMS...] # arbitrary RPC call
-bin/btqnet mine [IDX] [N]             # generate N blocks on node IDX
+bin/btqnet mine [IDX] [N]             # generate N blocks on node IDX (regtest only)
 bin/btqnet peers IDX                  # pretty-print getpeerinfo
 bin/btqnet logs IDX|controller|...    # follow a pod's logs
 bin/btqnet metrics                    # curl the controller exporter
@@ -161,6 +171,79 @@ Variables:
 
 - `$node` (multi-select) — drives every panel; pick a subset of nodes
   to focus on.
+
+---
+
+## Running on testnet
+
+```bash
+bin/btqnet up 5 testnet
+```
+
+What's different vs regtest:
+
+| concern | regtest | testnet |
+|---|---|---|
+| Mining | controller mines 1 block / 10 s, rotating across nodes; bootstrap mines 101 blocks for coinbase maturity. | controller does **not** mine — real PoW + real difficulty mean a single CPU pod has zero chance. The mining loop is auto-disabled. |
+| TX generation | controller spends from node-0's bootstrap wallet. | also disabled — testnet wallets need to be funded externally (a faucet, or import a known testnet privkey). |
+| Bootstrap | 101 blocks mined to node-0. | skipped. Each pod kicks off Initial Block Download instead. |
+| DNS seeds | disabled (`-dnsseed=0`). | **enabled**. Each node resolves `testnet-seed1.bitcoinquantum.com` / `testnet-seed2.bitcoinquantum.com` and pulls real testnet peers, on top of the in-cluster mesh. |
+| Pruning | off — full chain (~2 GB max in regtest). | `-prune=550` MiB by default to bound disk usage. `-txindex` is disabled in this mode (txindex is incompatible with pruning). |
+| `-maxconnections` | 125 (Bitcoin default). | 32, so a 20-node cluster doesn't pull 2 500 inbound connections from public peers. |
+| Storage | 2 GiB PVC per pod. | 10 GiB PVC per pod. |
+| Memory limit | 1 GiB per pod. | 2 GiB per pod (IBD + chainstate are heavier). |
+| RPC port | 18443. | 18332. |
+| P2P port | 18444. | 18333. |
+
+After `up`, watch IBD progress per node:
+
+```bash
+for i in 0 1 2 3 4; do
+  printf "node-%d  " $i
+  bin/btqnet cli $i -- getblockchaininfo \
+    | jq -r '"blocks=\(.blocks)  headers=\(.headers)  vp=\(.verificationprogress)"'
+done
+```
+
+Or, in Grafana, the `btq_node_blocks` panel will show each node's
+height climbing toward `btq_node_headers`. The
+`btq_cluster_distinct_best_blocks` and `btq_cluster_height_spread`
+gauges naturally start out > 1 / > 0 during IBD and converge to 1 / 0
+once every node is fully synced. That's the cluster reaching consensus
+visualised in real time.
+
+### When you actually want to mine on testnet
+
+Either point a real miner at one of the cluster's nodes (e.g. cgminer
+`-o stratum+tcp://...` against a stratum proxy you run alongside), or
+enable opportunistic CPU-mining inside the controller:
+
+```bash
+kubectl --context kind-btqnet -n btqnet \
+  set env deploy/btq-controller ENABLE_MINING=1 BLOCK_INTERVAL=300
+```
+
+This calls `generatetoaddress` exactly as on regtest. On a chain whose
+testnet difficulty has dropped to the min-diff floor (which BTQ
+testnet currently sits on), the call returns within seconds; on
+higher-difficulty chains it will simply time out and the loop will
+keep retrying. Set it back to `0` to stop.
+
+### Funding wallets on testnet
+
+The controller does not auto-fund anything. To send transactions on
+testnet:
+
+```bash
+# import an existing privkey
+bin/btqnet rpc 0 importprivkey "<WIF>"
+
+# or get an address and request from a faucet
+bin/btqnet rpc 0 -rpcwallet=default getnewaddress
+```
+
+Then `ENABLE_TX=1 BTQ_RPC_USER=... ...` on the controller will start
+the tx loop again.
 
 ---
 
@@ -262,13 +345,14 @@ or kustomize required.
 
 ## Notes & caveats
 
-- **Storage is `emptyDir`.** Pods that get rescheduled lose their chain
-  data and wallets. The controller's bootstrap step is idempotent on
-  *wallet balance*, so it will quietly re-mine 101 blocks if node-0's
-  wallet ever shows up empty. If you want to do long-running
-  experiments where state must survive `kind delete` or pod
-  rescheduling, change the `emptyDir` block in
-  `k8s/20-btq-statefulset.yaml` to a `volumeClaimTemplates:` entry.
+- **Storage is per-pod `PersistentVolumeClaim`** (kind ships the
+  `standard` storage class, backed by local-path-provisioner). Wallets
+  and chain data survive pod restarts and rolling updates. They do
+  *not* survive `bin/btqnet down`, which deletes the entire kind
+  cluster. If you scale down (e.g. `scale 5` after running with 10),
+  the orphaned PVCs (`data-btq-node-5` … `-9`) stick around and will
+  be re-attached if you scale back up — handy for keeping IBD
+  progress on testnet.
 - **Block reward is 5 BTQ on regtest** in this build of BTQ Core (not
   the 50 BTQ Bitcoin pays out). 101 mature coinbases = 505 BTQ on
   node-0, which the controller spends from for its tx loop.

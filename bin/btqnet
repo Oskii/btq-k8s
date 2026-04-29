@@ -2,13 +2,16 @@
 # btqnet — control plane CLI for the local BTQ multi-node Kubernetes lab.
 #
 # Subcommands:
-#   up [N]              build images, ensure kind cluster, deploy N nodes (default 5)
+#   up [N] [NETWORK]    build images, ensure kind cluster, deploy N nodes
+#                       (defaults: N=5, NETWORK=regtest; either arg may
+#                       come first, e.g. `btqnet up testnet 10`)
 #   down                delete the kind cluster (everything)
 #   scale N             scale running cluster to N nodes (1..20)
+#   chain               print the network the running cluster uses
 #   status              kubectl get all + node summary
 #   cli IDX -- ARGS     run `btq-cli` against node IDX (e.g. `btqnet cli 2 -- getblockcount`)
 #   rpc  IDX METHOD ... call an arbitrary RPC method on node IDX
-#   mine [IDX] [N]      generate N blocks on node IDX (defaults: idx=0, n=1)
+#   mine [IDX] [N]      generate N blocks on node IDX (regtest only)
 #   peers IDX           show node IDX's peer table
 #   logs TARGET         follow logs (TARGET = a node index, or 'controller', 'grafana', 'prometheus', 'loki')
 #   dash                print and (best-effort) open dashboard URLs
@@ -24,6 +27,7 @@ NAMESPACE="btqnet"
 NODE_IMAGE="btq-node:dev"
 CONTROLLER_IMAGE="btq-controller:dev"
 RENDERED_DIR="${ROOT}/.rendered"
+NETWORK_FILE="${RENDERED_DIR}/network"
 mkdir -p "${RENDERED_DIR}"
 
 KCTL=( kubectl --context "kind-${CLUSTER_NAME}" )
@@ -45,6 +49,42 @@ require() {
     done
     if [ "${#missing[@]}" -gt 0 ]; then
         die "missing required tools: ${missing[*]}"
+    fi
+}
+
+valid_network() {
+    case "$1" in
+        regtest|test|testnet|signet|main|mainnet) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Normalise testnet|mainnet to btqd's "test"|"main" for -chain.
+normalise_network() {
+    case "$1" in
+        testnet) echo "test" ;;
+        mainnet) echo "main" ;;
+        *)       echo "$1"   ;;
+    esac
+}
+
+# Per-network port + sizing defaults.
+network_defaults() {
+    local net="$1"
+    case "$net" in
+        regtest) echo "RPC=18443 P2P=18444 MEM=1Gi STORAGE=2Gi" ;;
+        test)    echo "RPC=18332 P2P=18333 MEM=2Gi STORAGE=10Gi" ;;
+        signet)  echo "RPC=38332 P2P=38333 MEM=2Gi STORAGE=10Gi" ;;
+        main)    echo "RPC=8332  P2P=8333  MEM=2Gi STORAGE=20Gi" ;;
+        *) die "unsupported network '$net'" ;;
+    esac
+}
+
+current_network() {
+    if [ -f "${NETWORK_FILE}" ]; then
+        cat "${NETWORK_FILE}"
+    else
+        echo "regtest"
     fi
 }
 
@@ -91,13 +131,23 @@ cmd_build() {
     fi
 }
 
+# Render manifests into .rendered/manifests.yaml after substituting all
+# placeholders (BTQ_NODES, BTQ_NETWORK, RPC_PORT, P2P_PORT, MEM, STORAGE).
 render_manifests() {
     local nodes="$1"
+    local network="$2"
     local out="${RENDERED_DIR}/manifests.yaml"
+    eval "$(network_defaults "$network")"  # sets RPC, P2P, MEM, STORAGE
     : > "${out}"
     for f in 00-namespace.yaml 10-btq-services.yaml 20-btq-statefulset.yaml \
              30-controller.yaml 40-prometheus.yaml 50-loki.yaml 60-grafana.yaml; do
-        sed "s/__BTQ_NODES__/${nodes}/g" "${ROOT}/k8s/${f}" >> "${out}"
+        sed -e "s/__BTQ_NODES__/${nodes}/g" \
+            -e "s/__BTQ_NETWORK__/${network}/g" \
+            -e "s/__RPC_PORT__/${RPC}/g" \
+            -e "s/__P2P_PORT__/${P2P}/g" \
+            -e "s/__BTQ_MEMORY__/${MEM}/g" \
+            -e "s/__BTQ_STORAGE__/${STORAGE}/g" \
+            "${ROOT}/k8s/${f}" >> "${out}"
         echo "---" >> "${out}"
     done
     echo "${out}"
@@ -110,9 +160,26 @@ apply_dashboard_cm() {
         -o yaml --dry-run=client | "${KCTL[@]}" apply -f -
 }
 
+# Parse `up [N] [NETWORK]` arguments — either order accepted, both
+# optional.  Defaults: N=5, NETWORK=regtest.
+_parse_up_args() {
+    local n="" net=""
+    for a in "$@"; do
+        if [[ "$a" =~ ^[0-9]+$ ]]; then
+            n="$a"
+        elif valid_network "$a"; then
+            net="$(normalise_network "$a")"
+        else
+            die "unrecognised arg '$a' — expected a node count (1..20) or a network name (regtest|testnet|signet|main)"
+        fi
+    done
+    : "${n:=5}"
+    : "${net:=regtest}"
+    echo "$n $net"
+}
+
 cmd_up() {
-    local nodes="${1:-5}"
-    [[ "${nodes}" =~ ^[0-9]+$ ]] || die "node count must be an integer"
+    read -r nodes network <<< "$(_parse_up_args "$@")"
     if [ "${nodes}" -lt 1 ] || [ "${nodes}" -gt 20 ]; then
         die "node count must be between 1 and 20"
     fi
@@ -122,16 +189,16 @@ cmd_up() {
     load_images
 
     local manifests
-    manifests="$(render_manifests "${nodes}")"
-    log "applying manifests for ${nodes} nodes ..."
+    manifests="$(render_manifests "${nodes}" "${network}")"
+    log "applying manifests :: nodes=${nodes} network=${network}"
     "${KCTL[@]}" apply -f "${manifests}"
     apply_dashboard_cm
+    echo "${network}" > "${NETWORK_FILE}"
 
-    # Force grafana to pick up dashboards CM if it was just created
     "${KCTL[@]}" -n "${NAMESPACE}" rollout restart deployment/grafana >/dev/null 2>&1 || true
 
     log "waiting for BTQ nodes to be ready ..."
-    "${KCTL[@]}" -n "${NAMESPACE}" rollout status statefulset/btq-node --timeout=5m
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout status statefulset/btq-node --timeout=10m
 
     log "waiting for controller / prometheus / grafana / loki ..."
     "${KCTL[@]}" -n "${NAMESPACE}" rollout status deployment/btq-controller --timeout=2m || true
@@ -148,14 +215,20 @@ cmd_scale() {
     if [ "${nodes}" -lt 1 ] || [ "${nodes}" -gt 20 ]; then
         die "node count must be between 1 and 20"
     fi
+    local network
+    network="$(current_network)"
     local manifests
-    manifests="$(render_manifests "${nodes}")"
-    log "applying manifests for ${nodes} nodes ..."
+    manifests="$(render_manifests "${nodes}" "${network}")"
+    log "applying manifests :: nodes=${nodes} network=${network}"
     "${KCTL[@]}" apply -f "${manifests}"
     log "rolling restart so existing nodes pick up new -addnode list ..."
     "${KCTL[@]}" -n "${NAMESPACE}" rollout restart statefulset/btq-node
     "${KCTL[@]}" -n "${NAMESPACE}" rollout restart deployment/btq-controller
-    "${KCTL[@]}" -n "${NAMESPACE}" rollout status  statefulset/btq-node --timeout=5m
+    "${KCTL[@]}" -n "${NAMESPACE}" rollout status  statefulset/btq-node --timeout=10m
+}
+
+cmd_chain() {
+    echo "$(current_network)"
 }
 
 cmd_down() {
@@ -165,6 +238,7 @@ cmd_down() {
     else
         warn "no cluster '${CLUSTER_NAME}' to delete"
     fi
+    rm -f "${NETWORK_FILE}"
 }
 
 cmd_status() {
@@ -173,7 +247,8 @@ cmd_status() {
     echo
     "${KCTL[@]}" -n "${NAMESPACE}" get svc
     echo
-    log "current node count: $("${KCTL[@]}" -n "${NAMESPACE}" get statefulset btq-node -o jsonpath='{.status.replicas}' 2>/dev/null || echo '?')"
+    log "current network    : $(current_network)"
+    log "current node count : $("${KCTL[@]}" -n "${NAMESPACE}" get statefulset btq-node -o jsonpath='{.status.replicas}' 2>/dev/null || echo '?')"
 }
 
 pod_for_node() {
@@ -181,13 +256,20 @@ pod_for_node() {
     echo "btq-node-${idx}"
 }
 
+# Returns the right `-chain=...` argument for btq-cli based on the
+# current cluster network.
+chain_arg() {
+    echo "-chain=$(current_network)"
+}
+
 cmd_cli() {
     local idx="${1:?usage: btqnet cli IDX -- ARGS}"; shift || true
-    [[ "$1" == "--" ]] && shift
-    local pod
+    [[ "${1:-}" == "--" ]] && shift
+    local pod chain
     pod="$(pod_for_node "${idx}")"
+    chain="$(chain_arg)"
     "${KCTL[@]}" -n "${NAMESPACE}" exec -i "${pod}" -- \
-        btq-cli -regtest -rpcuser=btq -rpcpassword=btq "$@"
+        btq-cli "${chain}" -rpcuser=btq -rpcpassword=btq "$@"
 }
 
 cmd_rpc() {
@@ -197,6 +279,12 @@ cmd_rpc() {
 }
 
 cmd_mine() {
+    local network
+    network="$(current_network)"
+    if [ "${network}" != "regtest" ]; then
+        die "mining is only supported on regtest (current: ${network}). \
+Real PoW networks need actual hashrate; use a real testnet faucet/miner."
+    fi
     local idx="${1:-0}"
     local n="${2:-1}"
     local pod
@@ -240,9 +328,11 @@ cmd_logs() {
 }
 
 cmd_dash() {
+    local network
+    network="$(current_network)"
     cat <<EOF
 
-  $(c_green "BTQnet is running.")
+  $(c_green "BTQnet is running.")  network=$(c_yellow "${network}")
 
   Grafana     :  http://localhost:30030      (admin / btqnet)
   Prometheus  :  http://localhost:30090
@@ -250,9 +340,19 @@ cmd_dash() {
   Loki        :  http://localhost:30310
 
   $(c_dim "Tip: use \`btqnet status\` to see pods, \`btqnet logs 0\` to tail node-0,")
-  $(c_dim "     \`btqnet cli 0 -- getblockcount\` to query an RPC.")
+  $(c_dim "     \`btqnet cli 0 -- getblockchaininfo\` to query an RPC.")
 
 EOF
+    if [ "${network}" != "regtest" ]; then
+        cat <<EOF
+  $(c_yellow "NOTE:") on ${network}, mining and tx generation are disabled by default.
+  Nodes will perform Initial Block Download from the public network
+  (DNS seeds enabled). Track progress with:
+
+    btqnet cli 0 -- getblockchaininfo | jq '{blocks, headers, verificationprogress}'
+
+EOF
+    fi
 }
 
 cmd_metrics() {
@@ -270,6 +370,7 @@ main() {
         up)       cmd_up      "$@" ;;
         down)     cmd_down    "$@" ;;
         scale)    cmd_scale   "$@" ;;
+        chain)    cmd_chain   "$@" ;;
         status)   cmd_status  "$@" ;;
         cli)      cmd_cli     "$@" ;;
         rpc)      cmd_rpc     "$@" ;;
