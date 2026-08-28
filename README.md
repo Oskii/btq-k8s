@@ -15,7 +15,10 @@ $ bin/btqnet up 5 testnet     # 5 BTQ nodes on the real BTQ testnet
 $ bin/btqnet up testnet 10    # (positional args may come in either order)
 $ bin/btqnet scale 20         # grow to 20 nodes, no data loss
 $ bin/btqnet down             # delete the kind cluster, free resources
+$ bin/fuzz smoke              # in-process fuzzer for btqnet / controller / entrypoint
 ```
+
+See [`fuzz/README.md`](fuzz/README.md) for targets and how to add more.
 
 `bin/btqnet up` accepts an optional second arg specifying the chain:
 `regtest` (default), `testnet` / `test`, `signet`, or `main` /

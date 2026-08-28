@@ -1,3 +1,6 @@
+fuzz/node_modules/
+fuzz/crashes/**/*.bin
+fuzz/crashes/**/*.json
 .rendered/
 *.swp
 *.swo

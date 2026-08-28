@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Native fuzz runner for btq-k8s.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT/fuzz"
+if [ ! -d node_modules ]; then
+  npm install --silent
+fi
+cmd="${1:-fuzz}"
+shift || true
+case "$cmd" in
+  list)  exec npx tsx src/cli.ts --list "$@" ;;
+  smoke) exec npx tsx src/cli.ts --iterations 40 --timeout-ms 200 --no-save "$@" ;;
+  fuzz)  exec npx tsx src/cli.ts "$@" ;;
+  *)     exec npx tsx src/cli.ts "$cmd" "$@" ;;
+esac
