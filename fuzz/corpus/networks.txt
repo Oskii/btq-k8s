@@ -1,0 +1,6 @@
+regtest
+testnet
+main
+signet
+foo
+regtest/x
